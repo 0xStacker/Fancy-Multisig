@@ -2,25 +2,33 @@
 pragma solidity ^0.8.0;
 
 contract MultiSig{
-    event _Deposit(uint _amount, address _depositor);
-    event _Withdraw(uint _amount, address _withdrawer);
-    event _Propose(address _contract, string _function);
-    event _Accept(address voter);
-    event _reject(address voter);
-    event _AddWallet(address wallet);
+    event Deposit(uint _amount, address _depositor);
+    event Withdraw(uint _amount, address _withdrawer);
+    // event Propose(address _contract, string _function);
+    event Accept(address _signer);
+    event Reject(address _signer);
+    event AddWallet(address _wallet);
+    event KickMember(address _member);
+    event Execute(uint _transactionId);
     
     error BadLimit();
     error CopayerLimitReached(uint8 limit);
     error MaxCopayerLimitReached(uint8 max);
     error BadAddress();
+    error AlreadySigned();
+    error TransactionExecuted(uint8 txnId);
+    error TransactionRejected(uint8 txnId);
+
 
     struct Transaction{
        uint8 accepts;
        uint8 rejects;
        uint transactionId;
        uint proposalTime;
-       address _contract;
-       string _function;
+       address _to;
+       bytes _data;
+       uint _value;
+       mapping(address => bool) signatures;
     }
 
     // returns 1 if proposed transaction has been executed, -1 if terminated and 0 if pending
@@ -28,7 +36,16 @@ contract MultiSig{
     Transaction[] executed;
     Transaction[] rejected;
     Transaction[] pending;
+    mapping(uint8 => bool) executedCheck;
+    mapping(uint8 => bool) rejectedCheck;
+
     
+    modifier Onlyonce(uint8 _transactionId){
+    if(allProposal[_transactionId - 1].signatures[msg.sender] == true){
+        revert AlreadySigned();
+    }
+    _;
+    }
     
     modifier onlyAdmin{
         require(msg.sender == admin, "NotAdmin");
@@ -48,6 +65,7 @@ contract MultiSig{
     uint8 constant maxCopayers = 20;
     uint8 activeWallets;
     uint8 kicked;
+    uint8 nextTransactionId = 1;
     address admin;
     address[20] copayerAddresses;
     mapping(address => bool) copayerCheck;
@@ -80,7 +98,7 @@ contract MultiSig{
         copayerCheck[member] = true;
         addressTrack[member] = activeWallets;
         activeWallets += 1;
-        emit _AddWallet(member);
+        emit AddWallet(member);
     }
 
     
@@ -95,6 +113,7 @@ contract MultiSig{
 
     function adjustCopayerLimit(adjust choice, uint8 newLimit) public onlyAdmin{
         if (choice == adjust.INCREASE){
+            require(newLimit > copayers, "");
             if (copayers == maxCopayers){
             revert MaxCopayerLimitReached(maxCopayers);
             }
@@ -137,6 +156,8 @@ contract MultiSig{
         }
 
         adjustCopayerLimit(adjust.REDUCE, copayers - 1);
+
+        emit KickMember(member);
     }
 
 
@@ -157,25 +178,77 @@ contract MultiSig{
     }
     
 
-    function deposit() external payable{}
-
-
-    function proposeTransaction(address _contract, string memory args) external onlyMembers returns(uint8){
-        Transaction storage newProposal = allProposal.push();
-        
+    function deposit() external payable{
+        emit Deposit(msg.value, msg.sender);
     }
 
-    function acceptProposal(uint proposalId) external onlyMembers{
-        
 
+    function proposeTransaction(address _to, uint _value, bytes memory _data) public onlyMembers returns(uint8){
+        Transaction storage newTransaction = allProposal.push();
+        newTransaction.transactionId = nextTransactionId;
+        newTransaction._to = _to;
+        newTransaction._data = _data;
+        newTransaction._value = _value;
+        newTransaction.proposalTime =block.timestamp;
+        nextTransactionId ++;
+        return (nextTransactionId--);
     }
 
-    function withdraw() external{
 
+
+// Vote for the execution of a proposed transaction
+
+    function acceptProposal(uint8 proposalId) external onlyMembers Onlyonce(proposalId) returns(bool result){
+        if(executedCheck[proposalId] == true){
+            revert TransactionExecuted(proposalId);
+        }
+
+        if(rejectedCheck[proposalId] == true){
+            revert TransactionRejected(proposalId);
+        }
+
+        allProposal[proposalId - 1].accepts += 1;
+        allProposal[proposalId - 1].signatures[msg.sender] = true;
+        if (allProposal[proposalId - 1].accepts == requiredSignatures){
+            result = execute(proposalId - 1);
+            executedCheck[proposalId] = true;
+        }
+
+        emit Accept(msg.sender);
     }
-  
-    function execute() external{}
-  
 
+// Vote against the execution of a proposed transaction
+
+    function rejectProposal(uint8 proposalId) external onlyMembers Onlyonce(proposalId) returns(string memory result){
+            if(executedCheck[proposalId] == true){
+                revert TransactionExecuted(proposalId);
+            }
+
+            if(rejectedCheck[proposalId] == true){
+                revert TransactionRejected(proposalId);
+            }
+
+            allProposal[proposalId - 1].rejects += 1;
+            allProposal[proposalId - 1].signatures[msg.sender] = true;
+            if (allProposal[proposalId - 1].rejects == (copayers - requiredSignatures) + 1){
+                result = "rejected";
+                rejectedCheck[proposalId] = true;
+            }
+
+            emit Reject(msg.sender);
+        }
+
+
+    // Withdraw funds 
+    function withdraw(uint amount) external onlyMembers{
+        proposeTransaction(msg.sender, amount, "");
+    }
+
+
+  // Execute proposed transaction
+    function execute(uint8 _transactionId) internal returns(bool){
+        (bool success,) = allProposal[_transactionId]._to.call{value: allProposal[_transactionId]._value}(allProposal[_transactionId]._data);
+        return success;
+    }
 
 }
