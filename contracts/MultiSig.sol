@@ -28,14 +28,26 @@ contract MultiSig{
        address _to;
        bytes _data;
        uint _value;
+       address[] sigArr;
        mapping(address => bool) signatures;
+    }
+
+    struct ReturnableTransaction{
+       uint8 accepts;
+       uint8 rejects;
+       uint transactionId;
+       uint proposalTime;
+       address _to;
+       bytes _data;
+       uint _value;
+       address[] signatures;
     }
 
     // returns 1 if proposed transaction has been executed, -1 if terminated and 0 if pending
     Transaction[] allProposal;
-    Transaction[] executed;
-    Transaction[] rejected;
-    Transaction[] pending;
+    ReturnableTransaction[] executed;
+    ReturnableTransaction[] rejected;
+    ReturnableTransaction[] pending;
     mapping(uint8 => bool) executedCheck;
     mapping(uint8 => bool) rejectedCheck;
 
@@ -209,6 +221,8 @@ contract MultiSig{
 
         allProposal[proposalId - 1].accepts += 1;
         allProposal[proposalId - 1].signatures[msg.sender] = true;
+        allProposal[proposalId - 1].sigArr.push(msg.sender);
+
         if (allProposal[proposalId - 1].accepts == requiredSignatures){
             result = execute(proposalId - 1);
             executedCheck[proposalId] = true;
@@ -219,7 +233,7 @@ contract MultiSig{
 
 // Vote against the execution of a proposed transaction
 
-    function rejectProposal(uint8 proposalId) external onlyMembers Onlyonce(proposalId) returns(string memory result){
+    function rejectProposal(uint8 proposalId) external onlyMembers Onlyonce(proposalId){
             if(executedCheck[proposalId] == true){
                 revert TransactionExecuted(proposalId);
             }
@@ -230,8 +244,17 @@ contract MultiSig{
 
             allProposal[proposalId - 1].rejects += 1;
             allProposal[proposalId - 1].signatures[msg.sender] = true;
+            allProposal[proposalId - 1].sigArr.push(msg.sender);
             if (allProposal[proposalId - 1].rejects == (copayers - requiredSignatures) + 1){
-                result = "rejected";
+                ReturnableTransaction storage newReturnable = executed.push();
+                newReturnable.accepts = allProposal[proposalId - 1].accepts;
+                newReturnable.rejects = allProposal[proposalId - 1].rejects;
+                newReturnable.transactionId = allProposal[proposalId - 1].transactionId;
+                newReturnable.proposalTime = allProposal[proposalId - 1].proposalTime;
+                newReturnable._to = allProposal[proposalId - 1]._to;
+                newReturnable._data = allProposal[proposalId - 1]._data;
+                newReturnable._value = allProposal[proposalId - 1]._value;
+                newReturnable.signatures = allProposal[proposalId - 1].sigArr;  
                 rejectedCheck[proposalId] = true;
             }
 
@@ -246,9 +269,35 @@ contract MultiSig{
 
 
   // Execute proposed transaction
+
+
+//    uint8 accepts;
+//        uint8 rejects;
+//        uint transactionId;
+//        uint proposalTime;
+//        address _to;
+//        bytes _data;
+//        uint _value;
+//        address[] signatures;
     function execute(uint8 _transactionId) internal returns(bool){
         (bool success,) = allProposal[_transactionId]._to.call{value: allProposal[_transactionId]._value}(allProposal[_transactionId]._data);
+        ReturnableTransaction storage newReturnable = executed.push();
+        newReturnable.accepts = allProposal[_transactionId].accepts;
+        newReturnable.rejects = allProposal[_transactionId].rejects;
+        newReturnable.transactionId = allProposal[_transactionId].transactionId;
+        newReturnable.proposalTime = allProposal[_transactionId].proposalTime;
+        newReturnable._to = allProposal[_transactionId]._to;
+        newReturnable._data = allProposal[_transactionId]._data;
+        newReturnable._value = allProposal[_transactionId]._value;
+        newReturnable.signatures = allProposal[_transactionId].sigArr;
+        emit Execute(_transactionId);   
         return success;
     }
+
+    function getExecuted() external view returns (ReturnableTransaction[] memory){
+        return executed;
+    }
+
+    // function getRejected() external view returns(ReturnableTransaction[] memory){};
 
 }
