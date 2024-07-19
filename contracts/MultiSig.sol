@@ -132,6 +132,7 @@ contract MultiSig{
             if (newLimit > maxCopayers){
             revert BadLimit();
             }
+
             copayers = newLimit; 
         }
 
@@ -190,11 +191,6 @@ contract MultiSig{
     }
     
 
-    function deposit() external payable{
-        emit Deposit(msg.value, msg.sender);
-    }
-
-
     function proposeTransaction(address _to, uint _value, bytes memory _data) public onlyMembers returns(uint8){
         Transaction storage newTransaction = allProposal.push();
         newTransaction.transactionId = nextTransactionId;
@@ -245,8 +241,8 @@ contract MultiSig{
             allProposal[proposalId - 1].rejects += 1;
             allProposal[proposalId - 1].signatures[msg.sender] = true;
             allProposal[proposalId - 1].sigArr.push(msg.sender);
-            if (allProposal[proposalId - 1].rejects == (copayers - requiredSignatures) + 1){
-                ReturnableTransaction storage newReturnable = executed.push();
+            if (allProposal[proposalId - 1].rejects >= (copayers - requiredSignatures) + 1){
+                ReturnableTransaction storage newReturnable = rejected.push();
                 newReturnable.accepts = allProposal[proposalId - 1].accepts;
                 newReturnable.rejects = allProposal[proposalId - 1].rejects;
                 newReturnable.transactionId = allProposal[proposalId - 1].transactionId;
@@ -263,8 +259,9 @@ contract MultiSig{
 
 
     // Withdraw funds 
-    function withdraw(uint amount) external onlyMembers{
-        proposeTransaction(msg.sender, amount, "");
+    function withdraw(uint amount) external onlyMembers returns(uint8){
+       uint8 id = proposeTransaction(msg.sender, amount, "");
+       return id;
     }
 
 
@@ -298,6 +295,11 @@ contract MultiSig{
         return executed;
     }
 
-    // function getRejected() external view returns(ReturnableTransaction[] memory){};
+    function getRejected() external view returns(ReturnableTransaction[] memory){
+        return rejected;
+    }
+
+    fallback() external payable { }
+    receive() external payable { }
 
 }
